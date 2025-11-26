@@ -1,9 +1,13 @@
 # uDock – Minimal Container Runtime (CSE 323 OS Project)
 
 **Student Name:** Sowad Hossain
-**ID:** 2323614042
-**Course:** CSE 323 – Operating Systems Design
-**Project Title:** uDock – Minimal Docker-like Container Runtime in User Space
+
+**ID:** 2323614042 
+
+**Course:** CSE 323 – Operating Systems Design 
+
+**Project Title:** uDock – Minimal Docker-like Container Runtime in User Space 
+
 **Language / Platform:** C on Linux
 
 ---
