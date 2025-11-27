@@ -2,6 +2,7 @@
 #define MDOCK_FSUTIL_H
 
 #include <sys/types.h>
+#include <stddef.h>
 
 int mdock_get_home(char *buf, size_t size);
 int ensure_dir_exists(const char *path, mode_t mode);
