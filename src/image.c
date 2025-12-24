@@ -154,29 +154,106 @@ int find_image_rootfs(const char *base_dir,
 
 /* ----- mdock build command ----- */
 
+/* Validate image name */
+static int is_valid_image_name(const char *name)
+{
+    if (!name || name[0] == '\0') {
+        return 0;
+    }
+    
+    /* Check length */
+    size_t len = strlen(name);
+    if (len > 64) {
+        fprintf(stderr, "[mdock] image name too long (max 64 characters)\n");
+        return 0;
+    }
+    
+    /* Check for invalid characters (only allow alphanumeric, dash, underscore) */
+    for (size_t i = 0; i < len; i++) {
+        char c = name[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '-' || c == '_')) {
+            fprintf(stderr, "[mdock] invalid character in image name: '%c'\n", c);
+            fprintf(stderr, "[mdock] image name must contain only alphanumeric, dash, or underscore\n");
+            return 0;
+        }
+    }
+    
+    /* Don't allow names starting with dash or number */
+    if (name[0] == '-' || (name[0] >= '0' && name[0] <= '9')) {
+        fprintf(stderr, "[mdock] image name must start with a letter\n");
+        return 0;
+    }
+    
+    return 1;
+}
+
+/* Check if image already exists */
+static int image_exists(const char *base_dir, const char *image_name)
+{
+    char db_path[PATH_MAX];
+    if (snprintf(db_path, sizeof(db_path), "%s/images.db", base_dir) >= (int)sizeof(db_path)) {
+        return 0;
+    }
+
+    FILE *f = fopen(db_path, "r");
+    if (!f) {
+        return 0;
+    }
+
+    char line[4096];
+    while (fgets(line, sizeof(line), f)) {
+        char *p = strchr(line, '|');
+        if (!p) continue;
+        *p = '\0';
+        if (strcmp(line, image_name) == 0) {
+            fclose(f);
+            return 1;
+        }
+    }
+
+    fclose(f);
+    return 0;
+}
+
 int cmd_build(int argc, char **argv)
 {
     if (argc != 3) {
         fprintf(stderr, "Usage: mdock build <image_name> <rootfs_dir>\n");
+        fprintf(stderr, "\nExamples:\n");
+        fprintf(stderr, "  mdock build myimage ./rootfs\n");
+        fprintf(stderr, "  mdock build alpine-base /tmp/alpine-rootfs\n");
         return 1;
     }
 
     const char *image_name = argv[1];
     const char *src_rootfs = argv[2];
 
+    /* Validate image name */
+    if (!is_valid_image_name(image_name)) {
+        return 1;
+    }
+
     struct stat st;
     if (stat(src_rootfs, &st) == -1) {
-        perror("[mdock] stat rootfs_dir");
+        fprintf(stderr, "[mdock] error: rootfs directory '%s' does not exist\n", src_rootfs);
         return 1;
     }
     if (!S_ISDIR(st.st_mode)) {
-        fprintf(stderr, "[mdock] build: %s is not a directory\n", src_rootfs);
+        fprintf(stderr, "[mdock] error: '%s' is not a directory\n", src_rootfs);
         return 1;
     }
 
     char base_dir[PATH_MAX];
     if (mdock_init_home(base_dir, sizeof(base_dir)) != 0) {
         fprintf(stderr, "[mdock] failed to initialize home directory\n");
+        return 1;
+    }
+
+    /* Check if image already exists */
+    if (image_exists(base_dir, image_name)) {
+        fprintf(stderr, "[mdock] error: image '%s' already exists\n", image_name);
+        fprintf(stderr, "[mdock] hint: choose a different name or remove the existing image\n");
         return 1;
     }
 

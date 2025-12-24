@@ -48,7 +48,7 @@ uDock currently supports the following commands:
   * rootfs path
   * creation timestamp
 
-### 2.2 `mdock run <image_name>`
+### 2.2 `mdock run [OPTIONS] <image_name>`
 
 * Looks up `<image_name>` in `images.db` to find the rootfs path.
 * Generates a unique container ID (e.g. `c1`, `c2`, …).
@@ -94,13 +94,13 @@ uDock currently supports the following commands:
   * Optionally falls back to `SIGKILL` if the process does not exit in time.
 * Updates the container status to `stopped` / `killed`.
 
-### 2.5 Logging
+### 2.5 Logging and Error Handling
 
 * All major events are logged to `~/.mdock/log.txt`, for example:
 
   ```text
   [2025-11-22T12:01:09] BUILD image=myimg src=./rootfs
-  [2025-11-22T12:02:15] RUN   id=c1 image=myimg pid=3214
+  [2025-11-22T12:02:15] RUN   id=c1 image=myimg pid=3214 mem=128M cpu=10s
   [2025-11-22T12:03:10] EXIT  id=c1 status=0
   [2025-11-22T12:04:00] STOP  id=c1 signal=SIGTERM
   ```
@@ -129,7 +129,9 @@ This should compile the sources into a single executable:
 ./mdock
 ```
 
-### 3.3 Usage Example
+### 3.3 Usage Examples
+
+#### Basic Workflow
 
 1. **Prepare a root filesystem directory**, e.g.:
 
@@ -399,12 +401,16 @@ Add optional resource limits (`--mem`, `--cpu`) to enforce per-container caps on
 
 **Action:**
 
-* Extended `mdock run` to parse options like `--mem=128M` and `--cpu=5s`.
+* Extended `mdock run` to parse options like ``--mem 128M`` and ``--cpu 10``.
+* Added input validation and helpful error messages for limit values.
 * In the child process, before calling `execve`, used `setrlimit` with:
 
-  * `RLIMIT_AS` for maximum address space.
-  * `RLIMIT_CPU` for maximum CPU time.
-* Interpreted the `waitpid` status to determine whether the process exited normally or was killed due to a resource limit signal.
+  * ``RLIMIT_AS`` for maximum address space (memory limit).
+  * ``RLIMIT_CPU`` for maximum CPU time in seconds.
+* Enhanced exit code handling to detect resource limit violations:
+  * ``SIGXCPU`` signal indicates CPU time limit exceeded.
+  * ``SIGKILL`` may indicate memory limit exceeded.
+* Logged resource limits in RUN events for tracking.
 
 **Result:**
 

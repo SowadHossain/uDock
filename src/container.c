@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
 #include <limits.h>
 #include <errno.h>
 #include <signal.h>
@@ -389,16 +391,102 @@ int generate_container_id(const char *base_dir,
     return 0;
 }
 
+/* ----- Issue #13: Resource limit parsing ----- */
+
+static long parse_memory_limit(const char *str)
+{
+    char *endptr;
+    long value = strtol(str, &endptr, 10);
+    
+    if (value <= 0) {
+        return -1;
+    }
+    
+    /* Check for unit suffix */
+    if (*endptr == 'M' || *endptr == 'm') {
+        return value * 1024 * 1024;
+    } else if (*endptr == 'G' || *endptr == 'g') {
+        return value * 1024 * 1024 * 1024;
+    } else if (*endptr == 'K' || *endptr == 'k') {
+        return value * 1024;
+    } else if (*endptr == '\0') {
+        /* No unit, assume bytes */
+        return value;
+    }
+    
+    return -1;
+}
+
+static long parse_cpu_limit(const char *str)
+{
+    char *endptr;
+    long value = strtol(str, &endptr, 10);
+    
+    if (value <= 0) {
+        return -1;
+    }
+    
+    /* CPU limit is in seconds */
+    return value;
+}
+
 /* ----- Issue #8 & #9: mdock run command ----- */
 
 int cmd_run(int argc, char **argv)
 {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: mdock run <image_name>\n");
+    const char *image_name = NULL;
+    long mem_limit = -1;
+    long cpu_limit = -1;
+    
+    /* Parse arguments */
+    int i;
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--mem") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "[mdock] error: --mem requires a value\n");
+                fprintf(stderr, "Usage: mdock run [--mem <size>] [--cpu <seconds>] <image_name>\n");
+                return 1;
+            }
+            mem_limit = parse_memory_limit(argv[++i]);
+            if (mem_limit < 0) {
+                fprintf(stderr, "[mdock] error: invalid memory limit '%s'\n", argv[i]);
+                fprintf(stderr, "[mdock] hint: use format like 128M, 1G, or 512M\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--cpu") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "[mdock] error: --cpu requires a value\n");
+                fprintf(stderr, "Usage: mdock run [--mem <size>] [--cpu <seconds>] <image_name>\n");
+                return 1;
+            }
+            cpu_limit = parse_cpu_limit(argv[++i]);
+            if (cpu_limit < 0) {
+                fprintf(stderr, "[mdock] error: invalid CPU limit '%s'\n", argv[i]);
+                fprintf(stderr, "[mdock] hint: specify seconds (e.g., 10 for 10 seconds)\n");
+                return 1;
+            }
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "[mdock] error: unknown option '%s'\n", argv[i]);
+            fprintf(stderr, "Usage: mdock run [--mem <size>] [--cpu <seconds>] <image_name>\n");
+            return 1;
+        } else {
+            /* This is the image name */
+            image_name = argv[i];
+            break;
+        }
+    }
+    
+    if (!image_name) {
+        fprintf(stderr, "Usage: mdock run [--mem <size>] [--cpu <seconds>] <image_name>\n");
+        fprintf(stderr, "\nOptions:\n");
+        fprintf(stderr, "  --mem <size>      Memory limit (e.g., 128M, 1G)\n");
+        fprintf(stderr, "  --cpu <seconds>   CPU time limit in seconds\n");
+        fprintf(stderr, "\nExamples:\n");
+        fprintf(stderr, "  mdock run myimage\n");
+        fprintf(stderr, "  mdock run --mem 128M myimage\n");
+        fprintf(stderr, "  mdock run --mem 256M --cpu 10 myimage\n");
         return 1;
     }
-
-    const char *image_name = argv[1];
 
     /* Initialize ~/.mdock */
     char base_dir[PATH_MAX];
@@ -410,7 +498,20 @@ int cmd_run(int argc, char **argv)
     /* Lookup image rootfs */
     char rootfs_path[PATH_MAX];
     if (find_image_rootfs(base_dir, image_name, rootfs_path, sizeof(rootfs_path)) != 0) {
-        fprintf(stderr, "[mdock] image '%s' not found\n", image_name);
+        fprintf(stderr, "[mdock] error: image '%s' not found\n", image_name);
+        fprintf(stderr, "[mdock] hint: use 'mdock build %s <rootfs_dir>' to create it\n", image_name);
+        return 1;
+    }
+
+    /* Verify rootfs directory still exists */
+    struct stat st;
+    if (stat(rootfs_path, &st) == -1) {
+        fprintf(stderr, "[mdock] error: rootfs directory '%s' no longer exists\n", rootfs_path);
+        fprintf(stderr, "[mdock] hint: the image may be corrupted, try rebuilding it\n");
+        return 1;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        fprintf(stderr, "[mdock] error: rootfs path '%s' is not a directory\n", rootfs_path);
         return 1;
     }
 
@@ -430,6 +531,27 @@ int cmd_run(int argc, char **argv)
 
     if (pid == 0) {
         /* ===== Child process ===== */
+        
+        /* Set resource limits if specified */
+        if (mem_limit > 0) {
+            struct rlimit mem_rlimit;
+            mem_rlimit.rlim_cur = mem_limit;
+            mem_rlimit.rlim_max = mem_limit;
+            if (setrlimit(RLIMIT_AS, &mem_rlimit) != 0) {
+                perror("[mdock] setrlimit RLIMIT_AS");
+                fprintf(stderr, "[mdock] warning: failed to set memory limit, continuing anyway\n");
+            }
+        }
+        
+        if (cpu_limit > 0) {
+            struct rlimit cpu_rlimit;
+            cpu_rlimit.rlim_cur = cpu_limit;
+            cpu_rlimit.rlim_max = cpu_limit;
+            if (setrlimit(RLIMIT_CPU, &cpu_rlimit) != 0) {
+                perror("[mdock] setrlimit RLIMIT_CPU");
+                fprintf(stderr, "[mdock] warning: failed to set CPU limit, continuing anyway\n");
+            }
+        }
         
         /* Change directory to rootfs */
         if (chdir(rootfs_path) != 0) {
@@ -464,10 +586,32 @@ int cmd_run(int argc, char **argv)
         /* Continue anyway, we'll try to wait for the child */
     }
 
-    /* Log RUN event */
-    mdock_logf("RUN container_id=%s pid=%d image=%s", container_id, pid, image_name);
+    /* Log RUN event with resource limits if set */
+    if (mem_limit > 0 && cpu_limit > 0) {
+        mdock_logf("RUN container_id=%s pid=%d image=%s mem_limit=%ldM cpu_limit=%lds", 
+                   container_id, pid, image_name, mem_limit / (1024*1024), cpu_limit);
+    } else if (mem_limit > 0) {
+        mdock_logf("RUN container_id=%s pid=%d image=%s mem_limit=%ldM", 
+                   container_id, pid, image_name, mem_limit / (1024*1024));
+    } else if (cpu_limit > 0) {
+        mdock_logf("RUN container_id=%s pid=%d image=%s cpu_limit=%lds", 
+                   container_id, pid, image_name, cpu_limit);
+    } else {
+        mdock_logf("RUN container_id=%s pid=%d image=%s", container_id, pid, image_name);
+    }
 
-    printf("[mdock] Container %s started (PID %d)\n", container_id, pid);
+    if (mem_limit > 0 || cpu_limit > 0) {
+        printf("[mdock] Container %s started (PID %d)", container_id, pid);
+        if (mem_limit > 0) {
+            printf(" [mem: %ldM]", mem_limit / (1024*1024));
+        }
+        if (cpu_limit > 0) {
+            printf(" [cpu: %lds]", cpu_limit);
+        }
+        printf("\n");
+    } else {
+        printf("[mdock] Container %s started (PID %d)\n", container_id, pid);
+    }
 
     /* ===== Issue #9: Wait for container exit ===== */
 
@@ -477,12 +621,24 @@ int cmd_run(int argc, char **argv)
         return 1;
     }
 
-    /* Extract exit code */
+    /* Extract exit code and detect resource limit violations */
     int exit_code = 0;
+    const char *exit_reason = NULL;
+    
     if (WIFEXITED(status)) {
         exit_code = WEXITSTATUS(status);
     } else if (WIFSIGNALED(status)) {
-        exit_code = 128 + WTERMSIG(status);
+        int sig = WTERMSIG(status);
+        exit_code = 128 + sig;
+        
+        /* Detect resource limit signals */
+        if (sig == SIGXCPU) {
+            exit_reason = "CPU time limit exceeded";
+        } else if (sig == SIGKILL) {
+            exit_reason = "killed (possibly memory limit exceeded)";
+        } else {
+            exit_reason = "terminated by signal";
+        }
     }
 
     /* Update container record with exit info */
@@ -491,9 +647,19 @@ int cmd_run(int argc, char **argv)
     }
 
     /* Log EXIT event */
-    mdock_logf("EXIT container_id=%s pid=%d exit_code=%d", container_id, pid, exit_code);
+    if (exit_reason) {
+        mdock_logf("EXIT container_id=%s pid=%d exit_code=%d reason=%s", 
+                   container_id, pid, exit_code, exit_reason);
+    } else {
+        mdock_logf("EXIT container_id=%s pid=%d exit_code=%d", container_id, pid, exit_code);
+    }
 
-    printf("[mdock] Container %s exited with code %d\n", container_id, exit_code);
+    /* Print exit message */
+    if (exit_reason) {
+        printf("[mdock] Container %s exited with code %d (%s)\n", container_id, exit_code, exit_reason);
+    } else {
+        printf("[mdock] Container %s exited with code %d\n", container_id, exit_code);
+    }
 
     return 0;
 }
