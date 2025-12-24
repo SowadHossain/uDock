@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <time.h>
+#include <string.h>
 
 #include "timeutil.h"
 
@@ -31,5 +32,48 @@ int mdock_current_timestamp(char *buf, size_t size)
         return -1;
     }
 
+    return 0;
+}
+
+int calculate_uptime(const char *start_time, const char *end_time,
+                     char *uptime_buf, size_t size)
+{
+    struct tm tm_start = {0};
+    struct tm tm_end = {0};
+    
+    /* Parse start time */
+    if (!start_time || start_time[0] == '\0') {
+        snprintf(uptime_buf, size, "00:00:00");
+        return 0;
+    }
+    
+    if (strptime(start_time, "%Y-%m-%dT%H:%M:%S", &tm_start) == NULL) {
+        snprintf(uptime_buf, size, "??:??:??");
+        return -1;
+    }
+    
+    time_t start = mktime(&tm_start);
+    time_t end;
+    
+    /* If end_time is empty or NULL, use current time */
+    if (!end_time || end_time[0] == '\0' || end_time[0] == '|') {
+        end = time(NULL);
+    } else {
+        if (strptime(end_time, "%Y-%m-%dT%H:%M:%S", &tm_end) == NULL) {
+            snprintf(uptime_buf, size, "??:??:??");
+            return -1;
+        }
+        end = mktime(&tm_end);
+    }
+    
+    /* Calculate difference */
+    long diff = (long)difftime(end, start);
+    if (diff < 0) diff = 0;
+    
+    int hours = diff / 3600;
+    int minutes = (diff % 3600) / 60;
+    int seconds = diff % 60;
+    
+    snprintf(uptime_buf, size, "%02d:%02d:%02d", hours, minutes, seconds);
     return 0;
 }
