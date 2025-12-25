@@ -94,7 +94,65 @@ uDock currently supports the following commands:
   * Optionally falls back to `SIGKILL` if the process does not exit in time.
 * Updates the container status to `stopped` / `killed`.
 
-### 2.5 Logging and Error Handling
+### 2.5 `mdock images`
+
+* Lists all built images with detailed metadata.
+* Displays a formatted table showing:
+  * Image name
+  * Size (calculated using `du`)
+  * Creation timestamp
+* Example output:
+  ```text
+  IMAGE      SIZE       CREATED
+  myimg      12.5M      2025-12-24 10:30:15
+  base       8.3M       2025-12-24 09:15:42
+  ```
+
+### 2.6 `mdock rmi <image_name>`
+
+* Removes an image and its associated rootfs directory.
+* Safety checks:
+  * Verifies the image exists in `images.db`.
+  * Checks if any containers (running or stopped) are using this image.
+  * Prevents deletion if the image is in use.
+* Removes the image record from `images.db` and deletes the rootfs directory.
+
+### 2.7 `mdock rm <container_id>`
+
+* Removes a stopped container from the system.
+* Validation:
+  * Ensures the container exists in `containers.db`.
+  * Verifies the container is not currently running.
+* Removes the container record from `containers.db`.
+
+### 2.8 Environment Variables in `mdock run`
+
+* Supports passing custom environment variables to containers using `-e` flags.
+* Syntax:
+  ```bash
+  ./mdock run -e KEY1=VALUE1 -e KEY2=VALUE2 myimg
+  ```
+* Default environment variables provided:
+  * `PATH=/usr/local/bin:/usr/bin:/bin`
+  * `HOME=/root`
+  * `TERM=linux`
+* Custom variables override or extend the defaults.
+
+### 2.9 Container Logs with `mdock logs`
+
+* Captures container stdout and stderr to persistent log files.
+* Log files stored at: `~/.mdock/logs/<container_id>.log`
+* View logs:
+  ```bash
+  ./mdock logs <container_id>
+  ```
+* Follow logs in real-time (like `tail -f`):
+  ```bash
+  ./mdock logs -f <container_id>
+  ```
+* In follow mode, automatically exits when the container stops.
+
+### 2.10 Logging and Error Handling
 
 * All major events are logged to `~/.mdock/log.txt`, for example:
 
@@ -167,6 +225,42 @@ This should compile the sources into a single executable:
    ```
 
    (Assuming `c1` is a valid container ID.)
+
+6. **List all images:**
+
+   ```bash
+   ./mdock images
+   ```
+
+7. **Run a container with environment variables:**
+
+   ```bash
+   ./mdock run -e DATABASE_URL=postgres://localhost -e DEBUG=true myimg
+   ```
+
+8. **View container logs:**
+
+   ```bash
+   ./mdock logs c1
+   ```
+
+   Or follow logs in real-time:
+
+   ```bash
+   ./mdock logs -f c1
+   ```
+
+9. **Remove a stopped container:**
+
+   ```bash
+   ./mdock rm c1
+   ```
+
+10. **Remove an unused image:**
+
+    ```bash
+    ./mdock rmi myimg
+    ```
 
 ---
 

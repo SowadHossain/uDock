@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <errno.h>
 #include <signal.h>
@@ -437,6 +438,8 @@ int cmd_run(int argc, char **argv)
     const char *image_name = NULL;
     long mem_limit = -1;
     long cpu_limit = -1;
+    char *env_vars[128];  /* Store -e KEY=VALUE pairs */
+    int env_count = 0;
     
     /* Parse arguments */
     int i;
@@ -444,7 +447,7 @@ int cmd_run(int argc, char **argv)
         if (strcmp(argv[i], "--mem") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "[mdock] error: --mem requires a value\n");
-                fprintf(stderr, "Usage: mdock run [--mem <size>] [--cpu <seconds>] <image_name>\n");
+                fprintf(stderr, "Usage: mdock run [OPTIONS] <image_name>\n");
                 return 1;
             }
             mem_limit = parse_memory_limit(argv[++i]);
@@ -456,7 +459,7 @@ int cmd_run(int argc, char **argv)
         } else if (strcmp(argv[i], "--cpu") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "[mdock] error: --cpu requires a value\n");
-                fprintf(stderr, "Usage: mdock run [--mem <size>] [--cpu <seconds>] <image_name>\n");
+                fprintf(stderr, "Usage: mdock run [OPTIONS] <image_name>\n");
                 return 1;
             }
             cpu_limit = parse_cpu_limit(argv[++i]);
@@ -465,9 +468,19 @@ int cmd_run(int argc, char **argv)
                 fprintf(stderr, "[mdock] hint: specify seconds (e.g., 10 for 10 seconds)\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "-e") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "[mdock] error: -e requires KEY=VALUE\n");
+                return 1;
+            }
+            if (env_count >= 127) {
+                fprintf(stderr, "[mdock] error: too many environment variables (max 127)\n");
+                return 1;
+            }
+            env_vars[env_count++] = argv[++i];
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "[mdock] error: unknown option '%s'\n", argv[i]);
-            fprintf(stderr, "Usage: mdock run [--mem <size>] [--cpu <seconds>] <image_name>\n");
+            fprintf(stderr, "Usage: mdock run [OPTIONS] <image_name>\n");
             return 1;
         } else {
             /* This is the image name */
@@ -477,14 +490,16 @@ int cmd_run(int argc, char **argv)
     }
     
     if (!image_name) {
-        fprintf(stderr, "Usage: mdock run [--mem <size>] [--cpu <seconds>] <image_name>\n");
+        fprintf(stderr, "Usage: mdock run [OPTIONS] <image_name>\n");
         fprintf(stderr, "\nOptions:\n");
         fprintf(stderr, "  --mem <size>      Memory limit (e.g., 128M, 1G)\n");
         fprintf(stderr, "  --cpu <seconds>   CPU time limit in seconds\n");
+        fprintf(stderr, "  -e KEY=VALUE      Set environment variable\n");
         fprintf(stderr, "\nExamples:\n");
         fprintf(stderr, "  mdock run myimage\n");
         fprintf(stderr, "  mdock run --mem 128M myimage\n");
-        fprintf(stderr, "  mdock run --mem 256M --cpu 10 myimage\n");
+        fprintf(stderr, "  mdock run -e DEBUG=1 -e PORT=8080 myimage\n");
+        fprintf(stderr, "  mdock run --mem 256M --cpu 10 -e APP_ENV=prod myimage\n");
         return 1;
     }
 
@@ -532,6 +547,23 @@ int cmd_run(int argc, char **argv)
     if (pid == 0) {
         /* ===== Child process ===== */
         
+        /* Create logs directory if it doesn't exist */
+        char logs_dir[PATH_MAX];
+        if (snprintf(logs_dir, sizeof(logs_dir), "%s/logs", base_dir) < (int)sizeof(logs_dir)) {
+            mkdir(logs_dir, 0755);  /* Ignore errors if already exists */
+            
+            /* Redirect stdout and stderr to log file */
+            char log_path[PATH_MAX];
+            if (snprintf(log_path, sizeof(log_path), "%s/%s.log", logs_dir, container_id) < (int)sizeof(log_path)) {
+                int log_fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+                if (log_fd >= 0) {
+                    dup2(log_fd, STDOUT_FILENO);
+                    dup2(log_fd, STDERR_FILENO);
+                    close(log_fd);
+                }
+            }
+        }
+        
         /* Set resource limits if specified */
         if (mem_limit > 0) {
             struct rlimit mem_rlimit;
@@ -567,9 +599,24 @@ int cmd_run(int argc, char **argv)
          * }
          */
 
+        /* Build environment array */
+        char *envp[256];
+        int env_idx = 0;
+        
+        /* Add default environment variables */
+        envp[env_idx++] = "PATH=/bin:/usr/bin:/sbin:/usr/sbin";
+        envp[env_idx++] = "HOME=/root";
+        envp[env_idx++] = "TERM=xterm";
+        
+        /* Add user-specified environment variables */
+        for (int j = 0; j < env_count && env_idx < 255; j++) {
+            envp[env_idx++] = env_vars[j];
+        }
+        
+        envp[env_idx] = NULL;
+
         /* Execute /bin/sh inside the container */
         char *args[] = {"/bin/sh", NULL};
-        char *envp[] = {NULL};
         
         execve("/bin/sh", args, envp);
         
@@ -836,6 +883,197 @@ int cmd_stop(int argc, char **argv)
         mdock_logf("STOP container_id=%s pid=%d signal=SIGTERM", container_id, pid);
 
         printf("[mdock] Container %s stopped gracefully (PID %d)\n", container_id, pid);
+    }
+
+    return 0;
+}
+
+int cmd_rm(int argc, char *argv[])
+{
+    if (argc < 2) {
+        fprintf(stderr, "Usage: mdock rm <container_id>\n");
+        return 1;
+    }
+
+    const char *container_id = argv[1];
+
+    char base_dir[PATH_MAX];
+    if (mdock_init_home(base_dir, sizeof(base_dir)) != 0) {
+        return 1;
+    }
+
+    /* Check if container exists and get its status */
+    int pid;
+    char status[32];
+    if (find_container_by_id(base_dir, container_id, &pid, status, sizeof(status)) != 0) {
+        fprintf(stderr, "Error: Container '%s' not found.\n", container_id);
+        return 1;
+    }
+
+    /* Check if container is still running */
+    if (strcmp(status, "running") == 0 || is_pid_alive(pid)) {
+        fprintf(stderr, "Error: Container '%s' is still running.\n", container_id);
+        fprintf(stderr, "Hint: Stop it first with 'mdock stop %s'\n", container_id);
+        return 1;
+    }
+
+    /* Read all containers, remove the target one */
+    char db_path[PATH_MAX];
+    if (snprintf(db_path, sizeof(db_path), "%s/containers.db", base_dir) >= (int)sizeof(db_path)) {
+        fprintf(stderr, "[mdock] db path too long\n");
+        return 1;
+    }
+
+    FILE *fp = fopen(db_path, "r");
+    if (!fp) {
+        perror("[mdock] fopen containers.db");
+        return 1;
+    }
+
+    char lines[1000][4096];
+    int line_count = 0;
+    int found = 0;
+
+    char line[4096];
+    while (fgets(line, sizeof(line), fp) && line_count < 1000) {
+        char current_id[64];
+        if (sscanf(line, "%63[^|]", current_id) == 1) {
+            if (strcmp(current_id, container_id) == 0) {
+                found = 1;
+                continue;  // Skip this line (delete it)
+            }
+        }
+        strncpy(lines[line_count], line, sizeof(lines[line_count]) - 1);
+        lines[line_count][sizeof(lines[line_count]) - 1] = '\0';
+        line_count++;
+    }
+    fclose(fp);
+
+    if (!found) {
+        fprintf(stderr, "Error: Container '%s' not found in database.\n", container_id);
+        return 1;
+    }
+
+    /* Write back without the deleted container */
+    fp = fopen(db_path, "w");
+    if (!fp) {
+        perror("[mdock] fopen for writing");
+        return 1;
+    }
+
+    for (int i = 0; i < line_count; i++) {
+        fputs(lines[i], fp);
+    }
+    fclose(fp);
+
+    mdock_logf("RM container_id=%s", container_id);
+    printf("Removed container '%s'\n", container_id);
+
+    return 0;
+}
+
+int cmd_logs(int argc, char *argv[])
+{
+    int follow = 0;
+    const char *container_id = NULL;
+    
+    /* Parse arguments */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--follow") == 0) {
+            follow = 1;
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "Error: Unknown option '%s'\n", argv[i]);
+            fprintf(stderr, "Usage: mdock logs [-f|--follow] <container_id>\n");
+            return 1;
+        } else {
+            container_id = argv[i];
+        }
+    }
+    
+    if (!container_id) {
+        fprintf(stderr, "Usage: mdock logs [-f|--follow] <container_id>\n");
+        fprintf(stderr, "\nOptions:\n");
+        fprintf(stderr, "  -f, --follow    Follow log output (like tail -f)\n");
+        return 1;
+    }
+
+    char base_dir[PATH_MAX];
+    if (mdock_init_home(base_dir, sizeof(base_dir)) != 0) {
+        return 1;
+    }
+
+    /* Verify container exists */
+    int pid;
+    char status[32];
+    if (find_container_by_id(base_dir, container_id, &pid, status, sizeof(status)) != 0) {
+        fprintf(stderr, "Error: Container '%s' not found.\n", container_id);
+        return 1;
+    }
+
+    /* Build log file path */
+    char log_path[PATH_MAX];
+    if (snprintf(log_path, sizeof(log_path), "%s/logs/%s.log", base_dir, container_id) >= (int)sizeof(log_path)) {
+        fprintf(stderr, "[mdock] log path too long\n");
+        return 1;
+    }
+
+    /* Check if log file exists */
+    struct stat st;
+    if (stat(log_path, &st) != 0) {
+        fprintf(stderr, "No logs available for container '%s'\n", container_id);
+        return 0;
+    }
+
+    if (follow) {
+        /* Follow mode: tail -f behavior */
+        FILE *fp = fopen(log_path, "r");
+        if (!fp) {
+            perror("[mdock] fopen log file");
+            return 1;
+        }
+
+        /* Read existing content first */
+        char line[4096];
+        while (fgets(line, sizeof(line), fp)) {
+            fputs(line, stdout);
+        }
+        fflush(stdout);
+
+        /* Now follow new content */
+        while (1) {
+            while (fgets(line, sizeof(line), fp)) {
+                fputs(line, stdout);
+                fflush(stdout);
+            }
+            
+            clearerr(fp);  /* Clear EOF flag */
+            usleep(100000);  /* Sleep 100ms */
+            
+            /* Check if container is still running */
+            if (!is_pid_alive(pid)) {
+                /* Container stopped, read any final output and exit */
+                while (fgets(line, sizeof(line), fp)) {
+                    fputs(line, stdout);
+                }
+                break;
+            }
+        }
+        
+        fclose(fp);
+    } else {
+        /* Normal mode: cat the file */
+        FILE *fp = fopen(log_path, "r");
+        if (!fp) {
+            perror("[mdock] fopen log file");
+            return 1;
+        }
+
+        char line[4096];
+        while (fgets(line, sizeof(line), fp)) {
+            fputs(line, stdout);
+        }
+
+        fclose(fp);
     }
 
     return 0;

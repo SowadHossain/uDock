@@ -37,5 +37,7 @@ int update_container_status(const char *base_dir,
 int cmd_run(int argc, char **argv);
 int cmd_ps(int argc, char **argv);
 int cmd_stop(int argc, char **argv);
+int cmd_rm(int argc, char **argv);
+int cmd_logs(int argc, char **argv);
 
 #endif /* MDOCK_CONTAINER_H */
