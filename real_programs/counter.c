@@ -10,7 +10,7 @@
 
 int main(int argc, char *argv[]) {
     int count = 10;
-    int delay = 1;
+    int delay = 0;  /* No delay by default for fast demo */
     
     // Get from environment or arguments
     char *count_env = getenv("COUNT");
@@ -25,7 +25,11 @@ int main(int argc, char *argv[]) {
     printf("========================================\n");
     printf("  Counter Program\n");
     printf("========================================\n");
-    printf("Counting from 1 to %d with %d second delay\n", count, delay);
+    if (delay > 0) {
+        printf("Counting from 1 to %d with %d second delay\n", count, delay);
+    } else {
+        printf("Counting from 1 to %d (fast mode)\n", count);
+    }
     printf("PID: %d\n", getpid());
     printf("========================================\n\n");
     
@@ -38,8 +42,10 @@ int main(int argc, char *argv[]) {
         printf("[%s] Count: %d/%d\n", timestamp, i, count);
         fflush(stdout);
         
-        if (i < count) {
+        if (i < count && delay > 0) {
             sleep(delay);
+        } else if (i % 10 == 0) {
+            usleep(50000);  /* Small delay every 10 items to see output */
         }
     }
     

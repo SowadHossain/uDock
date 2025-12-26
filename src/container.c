@@ -485,20 +485,26 @@ int cmd_run(int argc, char **argv)
         } else {
             /* This is the image name */
             image_name = argv[i];
+            i++;  /* Move past image name to capture program args */
             break;
         }
     }
     
+    /* Capture program and its arguments (everything after image name) */
+    int prog_argc = argc - i;
+    char **prog_argv = (prog_argc > 0) ? &argv[i] : NULL;
+    
     if (!image_name) {
-        fprintf(stderr, "Usage: mdock run [OPTIONS] <image_name>\n");
+        fprintf(stderr, "Usage: mdock run [OPTIONS] <image_name> [program] [args...]\n");
         fprintf(stderr, "\nOptions:\n");
         fprintf(stderr, "  --mem <size>      Memory limit (e.g., 128M, 1G)\n");
         fprintf(stderr, "  --cpu <seconds>   CPU time limit in seconds\n");
         fprintf(stderr, "  -e KEY=VALUE      Set environment variable\n");
         fprintf(stderr, "\nExamples:\n");
         fprintf(stderr, "  mdock run myimage\n");
-        fprintf(stderr, "  mdock run --mem 128M myimage\n");
-        fprintf(stderr, "  mdock run -e DEBUG=1 -e PORT=8080 myimage\n");
+        fprintf(stderr, "  mdock run myimage hello\n");
+        fprintf(stderr, "  mdock run --mem 128M myimage stress mem 100\n");
+        fprintf(stderr, "  mdock run -e DEBUG=1 -e PORT=8080 myimage webserver\n");
         fprintf(stderr, "  mdock run --mem 256M --cpu 10 -e APP_ENV=prod myimage\n");
         return 1;
     }
@@ -615,10 +621,28 @@ int cmd_run(int argc, char **argv)
         
         envp[env_idx] = NULL;
 
-        /* Execute /bin/sh inside the container */
-        char *args[] = {"/bin/sh", NULL};
-        
-        execve("/bin/sh", args, envp);
+        /* Execute the specified program or /bin/sh */
+        if (prog_argc > 0 && prog_argv) {
+            /* Execute specified program with its arguments */
+            /* Build full path to program (it's relative to rootfs) */
+            char prog_path[PATH_MAX];
+            if (prog_argv[0][0] == '/') {
+                /* Absolute path in container */
+                snprintf(prog_path, sizeof(prog_path), ".%s", prog_argv[0]);
+            } else {
+                /* Relative path */
+                snprintf(prog_path, sizeof(prog_path), "./%s", prog_argv[0]);
+            }
+            
+            execve(prog_path, prog_argv, envp);
+            
+            /* If that fails, try without the ./ prefix */
+            execve(prog_argv[0], prog_argv, envp);
+        } else {
+            /* No program specified, execute /bin/sh */
+            char *args[] = {"/bin/sh", NULL};
+            execve("/bin/sh", args, envp);
+        }
         
         /* If execve fails */
         perror("[mdock] execve");
@@ -701,13 +725,7 @@ int cmd_run(int argc, char **argv)
         mdock_logf("EXIT container_id=%s pid=%d exit_code=%d", container_id, pid, exit_code);
     }
 
-    /* Print exit message */
-    if (exit_reason) {
-        printf("[mdock] Container %s exited with code %d (%s)\n", container_id, exit_code, exit_reason);
-    } else {
-        printf("[mdock] Container %s exited with code %d\n", container_id, exit_code);
-    }
-
+    /* Container runs in detached mode - return immediately */
     return 0;
 }
 

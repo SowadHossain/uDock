@@ -32,18 +32,19 @@ int is_prime(unsigned long n) {
 
 void cpu_stress_test(int duration_seconds) {
     printf("\n[CPU STRESS] Starting CPU intensive test...\n");
-    printf("[CPU STRESS] Will run for approximately %d seconds\n", duration_seconds);
+    printf("[CPU STRESS] Will run until CPU limit (approx %d seconds)\n", duration_seconds);
     printf("[CPU STRESS] Finding prime numbers...\n\n");
     
     time_t start_time = time(NULL);
     unsigned long num = 2;
     int prime_count = 0;
     
-    while (keep_running && (time(NULL) - start_time) < duration_seconds) {
+    /* Run forever until killed by CPU limit */
+    while (keep_running) {
         if (is_prime(num)) {
             prime_count++;
             
-            if (prime_count % 1000 == 0) {
+            if (prime_count % 500 == 0) {  /* Report more frequently */
                 int elapsed = time(NULL) - start_time;
                 printf("[CPU STRESS] Found %d primes in %d seconds (current: %lu)\n", 
                        prime_count, elapsed, num);
@@ -63,14 +64,14 @@ void cpu_stress_test(int duration_seconds) {
 void memory_stress_test() {
     printf("\n[MEMORY STRESS] Starting memory allocation test...\n");
     
-    size_t chunk_size = 10 * 1024 * 1024;  // 10 MB chunks
+    size_t chunk_size = 5 * 1024 * 1024;  // 5 MB chunks (faster to hit limits)
     int chunks = 0;
-    void *allocations[100];
+    void *allocations[200];
     
-    for (int i = 0; i < 100 && keep_running; i++) {
+    for (int i = 0; i < 200 && keep_running; i++) {
         void *ptr = malloc(chunk_size);
         if (ptr == NULL) {
-            printf("[MEMORY STRESS] Allocation failed at %d MB\n", chunks * 10);
+            printf("[MEMORY STRESS] Allocation failed at %d MB\n", chunks * 5);
             break;
         }
         
@@ -83,10 +84,10 @@ void memory_stress_test() {
         allocations[i] = ptr;
         chunks++;
         
-        printf("[MEMORY STRESS] Allocated %d MB\n", chunks * 10);
-        fflush(stdout);
-        
-        sleep(1);
+        if (chunks % 5 == 0) {  /* Report every 25 MB */
+            printf("[MEMORY STRESS] Allocated %d MB\n", chunks * 5);
+            fflush(stdout);
+        }
     }
     
     printf("\n[MEMORY STRESS] Total allocated: %d MB\n", chunks * 10);

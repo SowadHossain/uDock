@@ -200,14 +200,9 @@ See **[HOW-TO-TEST.md](HOW-TO-TEST.md)** for detailed step-by-step testing and e
 
 ## 🎬 Demo Video
 
-Add your demo video link here (recommended: YouTube).
+Watch the full demonstration of uDock features:
 
-**Thumbnail method (works on GitHub):**
-
-1) Upload to YouTube
-2) Replace `YOUR_VIDEO_ID` below
-
-[![uDock Demo Video](https://img.youtube.com/vi/YOUR_VIDEO_ID/maxresdefault.jpg)](https://www.youtube.com/watch?v=YOUR_VIDEO_ID)
+[![uDock Demo Video](https://img.youtube.com/vi/_-RtKr80h7g/maxresdefault.jpg)](https://youtu.be/_-RtKr80h7g)
 
 ---
 
