@@ -2,7 +2,6 @@
 #define MDOCK_CONTAINER_H
 
 #include <stddef.h>
-#include <sys/types.h>
 
 /* Container database helpers */
 int add_container_record(const char *base_dir,

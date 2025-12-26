@@ -4,7 +4,7 @@
 # Tests all features of the uDock container runtime
 #
 
-set +e  # Exit on error
+set -e  # Exit on error
 
 # Colors for output
 RED='\033[0;31m'
@@ -112,24 +112,24 @@ check_prerequisites() {
 
 # Create test rootfs
 create_test_rootfs() {
-    print_header "Creating Test Root Filesystem" >&2
+    print_header "Creating Test Root Filesystem"
     
     local ROOTFS="/tmp/udock-test-rootfs"
     rm -rf "$ROOTFS"
     
-    print_test "Creating directory structure" >&2
+    print_test "Creating directory structure"
     mkdir -p "$ROOTFS"/{bin,lib,lib64,usr/bin,tmp,home,root}
-    print_success "Directory structure created" >&2
+    print_success "Directory structure created"
     
-    print_test "Copying essential binaries" >&2
+    print_test "Copying essential binaries"
     for binary in /bin/sh /bin/bash /bin/ls /bin/echo /bin/cat /bin/sleep /bin/ps /usr/bin/env; do
         if [ -f "$binary" ]; then
             cp "$binary" "$ROOTFS/bin/" 2>/dev/null || cp "$binary" "$ROOTFS/usr/bin/" 2>/dev/null || true
         fi
     done
-    print_success "Binaries copied" >&2
+    print_success "Binaries copied"
     
-    print_test "Copying required libraries" >&2
+    print_test "Copying required libraries"
     # Copy libraries for /bin/sh
     if [ -f /bin/sh ]; then
         ldd /bin/sh 2>/dev/null | grep "=>" | awk '{print $3}' | while read lib; do
@@ -147,18 +147,18 @@ create_test_rootfs() {
             fi
         done
     fi
-    print_success "Libraries copied" >&2
+    print_success "Libraries copied"
     
-    print_test "Copying dynamic linker" >&2
+    print_test "Copying dynamic linker"
     if [ -f /lib64/ld-linux-x86-64.so.2 ]; then
         cp /lib64/ld-linux-x86-64.so.2 "$ROOTFS/lib64/" 2>/dev/null || true
     elif [ -f /lib/ld-linux.so.2 ]; then
         cp /lib/ld-linux.so.2 "$ROOTFS/lib/" 2>/dev/null || true
     fi
-    print_success "Dynamic linker copied" >&2
+    print_success "Dynamic linker copied"
     
     # Create test scripts inside rootfs
-    print_test "Creating test scripts inside rootfs" >&2
+    print_test "Creating test scripts inside rootfs"
     
     cat > "$ROOTFS/bin/test_env.sh" << 'EOF'
 #!/bin/sh
@@ -169,7 +169,7 @@ echo "PATH=$PATH"
 echo "HOME=$HOME"
 echo "TERM=$TERM"
 EOF
-    chmod +x "$ROOTFS/bin/test_env.sh" >&2
+    chmod +x "$ROOTFS/bin/test_env.sh"
     
     cat > "$ROOTFS/bin/test_output.sh" << 'EOF'
 #!/bin/sh
@@ -180,7 +180,7 @@ echo "This is stderr line 1" >&2
 echo "This is stderr line 2" >&2
 echo "Test completed successfully"
 EOF
-    chmod +x "$ROOTFS/bin/test_output.sh" >&2
+    chmod +x "$ROOTFS/bin/test_output.sh"
     
     cat > "$ROOTFS/bin/test_cpu.sh" << 'EOF'
 #!/bin/sh
@@ -191,9 +191,9 @@ while [ $i -lt 1000000000 ]; do
 done
 echo "CPU task completed"
 EOF
-    chmod +x "$ROOTFS/bin/test_cpu.sh" >&2
+    chmod +x "$ROOTFS/bin/test_cpu.sh"
     
-    print_success "Test scripts created" >&2
+    print_success "Test scripts created"
     
     echo "$ROOTFS"
 }
