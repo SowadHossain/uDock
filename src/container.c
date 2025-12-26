@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 #include <limits.h>
 #include <errno.h>
 #include <signal.h>
+#include <time.h>
 #include <linux/limits.h>
 
 #include "container.h"
@@ -1047,7 +1049,10 @@ int cmd_logs(int argc, char *argv[])
             }
             
             clearerr(fp);  /* Clear EOF flag */
-            usleep(100000);  /* Sleep 100ms */
+            struct timespec ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = 100000000; /* 100ms */
+            nanosleep(&ts, NULL);
             
             /* Check if container is still running */
             if (!is_pid_alive(pid)) {
